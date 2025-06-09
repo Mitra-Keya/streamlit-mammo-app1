@@ -1,36 +1,36 @@
 # ========================== #
-import sys
+# 🔧 Patch to fix Streamlit error when importing torch.classes
 import types
 import torch
+if not hasattr(torch.classes, "__path__"):
+    torch.classes.__path__ = types.SimpleNamespace()
+    torch.classes.__path__._path = []
 
-# Patch to prevent Streamlit watcher issues with torch.classes
-if isinstance(torch.classes, types.ModuleType):
-    try:
-        torch.classes.__path__ = []
-    except Exception:
-        pass  # Safeguard in case __path__ is not assignable
-
-import streamlit as st
 # ...your other imports
 
 # ----- Imports -----
+import sys
 import os
 os.environ["PYTORCH_NO_CUSTOM_CLASS"] = "1"
-import torch.nn as nn
-import torchvision.transforms as transforms
-from torchvisi7on.models import resnet50, ResNet50_Weights
+
+import base64
 import pickle
 import tempfile
 from datetime import datetime
-from PIL import Image
-from fpdf import FPDF
+from io import BytesIO
+
 import numpy as np
-import pydicom
 import cv2
 import matplotlib.pyplot as plt
-from io import BytesIO
-import base64
+import pydicom
 from PIL import Image
+from fpdf import FPDF
+
+import streamlit as st
+import torch.nn as nn
+import torchvision.transforms as transforms
+from torchvision.models import resnet50, ResNet50_Weights
+
 
 
 # ----- Device Setup -----
