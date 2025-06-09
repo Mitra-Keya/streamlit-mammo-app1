@@ -11,7 +11,7 @@ if not hasattr(torch.classes, "__path__"):
 # ----- Imports -----
 import sys
 import os
-os.environ["PYTORCH_NO_CUSTOM_CLASS"] = "1"
+# os.environ["PYTORCH_NO_CUSTOM_CLASS"] = "1"
 
 import base64
 import pickle
