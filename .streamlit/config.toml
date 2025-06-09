@@ -1,3 +1,13 @@
+[server]
+headless = true
+port = 8501
+enableCORS = false
+runOnSave = false
+
+[watcher]
+type = "none"
+
+
 [theme]
 base="light"
 primaryColor="#4CAF50"
