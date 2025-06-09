@@ -1,18 +1,28 @@
 # ========================== #
-# 🔧 Patch to fix Streamlit error when importing torch.classes
+#!/usr/bin/env python3
+# run_app.py
+
+import asyncio
 import types
 import torch
+import subprocess
+import sys
+
+# 🛡️ Patch torch.classes for Streamlit compatibility
 if not hasattr(torch.classes, "__path__"):
     torch.classes.__path__ = types.SimpleNamespace()
     torch.classes.__path__._path = []
 
+# 🛠️ Ensure there's a running asyncio loop to prevent RuntimeError
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+
 # ...your other imports
-
-# ----- Imports -----
-import sys
 import os
-# os.environ["PYTORCH_NO_CUSTOM_CLASS"] = "1"
-
 import base64
 import pickle
 import tempfile
