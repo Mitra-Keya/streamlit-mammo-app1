@@ -1,0 +1,13 @@
+streamlit
+torch
+torchvision
+Pillow
+nltk
+fpdf
+pydicom
+numpy==1.23.5
+pylibjpeg
+pylibjpeg-libjpeg
+pylibjpeg-openjpeg
+PyPDF2
+opencv-python-headless
