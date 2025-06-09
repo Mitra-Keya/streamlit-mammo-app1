@@ -1,10 +1,21 @@
 # ========================== #
+import sys
+import types
+import torch
+
+# Patch to prevent Streamlit watcher issues with torch.classes
+if isinstance(torch.classes, types.ModuleType):
+    try:
+        torch.classes.__path__ = []
+    except Exception:
+        pass  # Safeguard in case __path__ is not assignable
+
+import streamlit as st
+# ...your other imports
 
 # ----- Imports -----
 import os
 os.environ["PYTORCH_NO_CUSTOM_CLASS"] = "1"
-import streamlit as st
-import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvisi7on.models import resnet50, ResNet50_Weights
