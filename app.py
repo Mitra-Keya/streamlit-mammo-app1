@@ -2,18 +2,19 @@
 
 # ----- Imports -----
 import os
-import pickle
-import tempfile
-from datetime import datetime
+os.environ["PYTORCH_NO_CUSTOM_CLASS"] = "1"
+import streamlit as st
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
+from torchvisi7on.models import resnet50, ResNet50_Weights
+import pickle
+import tempfile
+from datetime import datetime
 from PIL import Image
 from fpdf import FPDF
 import numpy as np
 import pydicom
-import streamlit as st
-from torchvision.models import resnet50, ResNet50_Weights
 import cv2
 import matplotlib.pyplot as plt
 from io import BytesIO
