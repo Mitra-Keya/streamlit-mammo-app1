@@ -1,6 +1,8 @@
 # ========================== #
 #!/usr/bin/env python3
 # run_app.py
+import os
+os.environ["STREAMLIT_WATCHER_TYPE"] = "none"  # Disable watcher that fails on torch.classes
 
 import asyncio
 import types
