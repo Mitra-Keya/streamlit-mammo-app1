@@ -3,6 +3,7 @@ headless = true
 port = 8501
 enableCORS = false
 runOnSave = false
+fileWatcherType = "none"
 
 [watcher]
 type = "none"
