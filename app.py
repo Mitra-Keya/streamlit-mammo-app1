@@ -1,6 +1,7 @@
-# ========================== # 
+# app.py (optimized version)
 import os
 os.environ["STREAMLIT_WATCHER_TYPE"] = "none"
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 import asyncio
 try:
@@ -8,31 +9,30 @@ try:
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
-
-# ----- Imports -----
+# Standard Imports
 import pickle
 import tempfile
 from datetime import datetime
+from io import BytesIO
+import base64
+
+# Scientific Libraries
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision.models import resnet50, ResNet50_Weights
-from PIL import Image
-from fpdf import FPDF
 import numpy as np
+from PIL import Image
 import pydicom
-import streamlit as st
 import cv2
-import matplotlib.pyplot as plt
-from io import BytesIO
-import base64
-
+import streamlit as st
+from fpdf import FPDF
 
 # ----- Device Setup -----
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# ----- Resource Loaders -----
+# ====== Cache Model & Resource Loaders ======
 @st.cache_resource
 def load_resources():
     with open("word_to_idx.pkl", "rb") as f:
@@ -42,77 +42,43 @@ def load_resources():
     embedding_matrix = torch.load("embedding_matrix.pt")
     return word_to_idx, idx_to_word, embedding_matrix
 
-word_to_idx, idx_to_word, embedding_matrix = load_resources()
-
-
-# ----- Decoder Definition -----
-class MammoReportDecoder(nn.Module):
-    def __init__(self, embedding_matrix, hidden_dim=256, dropout_rate=0.3):
-        super(MammoReportDecoder, self).__init__()
-        vocab_size, embedding_dim = embedding_matrix.shape
-
-        self.embedding = nn.Embedding.from_pretrained(embedding_matrix, freeze=False)
-        self.image_fc = nn.Linear(2048, hidden_dim)
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)
-        self.dropout = nn.Dropout(dropout_rate)
-        self.fc_out = nn.Linear(hidden_dim, vocab_size)
-
-    def forward(self, image_features, captions):
-        # Not used in inference
-        pass
-
 
 @st.cache_resource
 def load_decoder():
+    class MammoReportDecoder(nn.Module):
+        def __init__(self, embedding_matrix, hidden_dim=256, dropout_rate=0.3):
+            super().__init__()
+            vocab_size, embedding_dim = embedding_matrix.shape
+            self.embedding = nn.Embedding.from_pretrained(embedding_matrix, freeze=False)
+            self.image_fc = nn.Linear(2048, hidden_dim)
+            self.lstm = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)
+            self.dropout = nn.Dropout(dropout_rate)
+            self.fc_out = nn.Linear(hidden_dim, vocab_size)
+        def forward(self, image_features, captions):
+            pass  # Inference only
+    _, _, embedding_matrix = load_resources()
     model = MammoReportDecoder(embedding_matrix)
-    model.load_state_dict(torch.load("best_mammo_decoder.pth", map_location=device))
-    model.to(device)
+    model.load_state_dict(torch.load("best_mammo_decoder.pth", map_location=torch.device("cpu")))
     model.eval()
     return model
 
-decoder = load_decoder()
-
-
-# ----- Image Transformation -----
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406],
-                         [0.229, 0.224, 0.225])
-])
-
-
-# ----- ResNet50 Feature Extractor -----
 @st.cache_resource
 def load_resnet():
-    weights = ResNet50_Weights.IMAGENET1K_V1
-    model = resnet50(weights=weights)
-    model = torch.nn.Sequential(*list(model.children())[:-1])
-    model.to(device)
+    model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+    model = nn.Sequential(*list(model.children())[:-1])
     model.eval()
     return model
 
-resnet = load_resnet()
 
-
-# ----- Helper Functions -----
+# ====== Report Generation Logic ======
 def tokens_to_text(token_ids, idx_to_word):
-    words = []
-    for idx in token_ids:
-        word = idx_to_word.get(idx, "<UNK>")
-        if word == "<EOS>":
-            break
-        if word not in ("<PAD>", "<SOS>"):
-            words.append(word)
-    return " ".join(words)
+    return " ".join([idx_to_word.get(idx, "<UNK>") for idx in token_ids if idx_to_word.get(idx) not in ("<SOS>", "<PAD>", "<EOS>")])
 
-
-def generate_report_with_confidence(image_tensor, decoder, max_len=50):
+def generate_report(image_tensor, decoder, resnet, word_to_idx, idx_to_word, max_len=50):
     with torch.no_grad():
-        image_tensor = image_tensor.unsqueeze(0).to(device)
+        image_tensor = image_tensor.unsqueeze(0)
         features = resnet(image_tensor).squeeze(-1).squeeze(-1)
-
-        input_seq = torch.tensor([[word_to_idx["<SOS>"]]], device=device)
+        input_seq = torch.tensor([[word_to_idx["<SOS>"]]])
         decoded_indices = []
         confidences = []
 
@@ -123,23 +89,51 @@ def generate_report_with_confidence(image_tensor, decoder, max_len=50):
         for _ in range(max_len):
             embed = decoder.embedding(input_seq)
             lstm_out, hidden = decoder.lstm(embed, hidden)
-            output = decoder.fc_out(decoder.dropout(lstm_out))
-            output = output[:, -1, :]
-
+            output = decoder.fc_out(decoder.dropout(lstm_out))[:, -1, :]
             probs = torch.softmax(output, dim=-1)
             confidence, predicted_idx = probs.max(dim=-1)
             predicted_id = predicted_idx.item()
-
             if predicted_id == word_to_idx["<EOS>"]:
                 break
-
             decoded_indices.append(predicted_id)
             confidences.append(confidence.item())
             input_seq = predicted_idx.unsqueeze(0)
 
-        report_text = tokens_to_text(decoded_indices, idx_to_word)
-        avg_confidence = np.mean(confidences) if confidences else 0.0
-        return report_text, avg_confidence, confidences
+        return tokens_to_text(decoded_indices, idx_to_word), np.mean(confidences)
+
+# def generate_report_with_confidence(image_tensor, decoder, max_len=50):
+#     with torch.no_grad():
+#         image_tensor = image_tensor.unsqueeze(0).to(device)
+#         features = resnet(image_tensor).squeeze(-1).squeeze(-1)
+
+#         input_seq = torch.tensor([[word_to_idx["<SOS>"]]], device=device)
+#         decoded_indices = []
+#         confidences = []
+
+#         h = torch.tanh(decoder.image_fc(features)).unsqueeze(0)
+#         c = torch.zeros_like(h)
+#         hidden = (h, c)
+
+#         for _ in range(max_len):
+#             embed = decoder.embedding(input_seq)
+#             lstm_out, hidden = decoder.lstm(embed, hidden)
+#             output = decoder.fc_out(decoder.dropout(lstm_out))
+#             output = output[:, -1, :]
+
+#             probs = torch.softmax(output, dim=-1)
+#             confidence, predicted_idx = probs.max(dim=-1)
+#             predicted_id = predicted_idx.item()
+
+#             if predicted_id == word_to_idx["<EOS>"]:
+#                 break
+
+#             decoded_indices.append(predicted_id)
+#             confidences.append(confidence.item())
+#             input_seq = predicted_idx.unsqueeze(0)
+
+#         report_text = tokens_to_text(decoded_indices, idx_to_word)
+#         avg_confidence = np.mean(confidences) if confidences else 0.0
+#         return report_text, avg_confidence, confidences
 
 
 def save_report_as_pdf(report_text, image_pil, dicom_metadata=None, image_name="Uploaded Image", gradcam_img=None):
@@ -408,7 +402,7 @@ st.title("🩺 Mammography Report Generator")
 
 uploaded_file = st.file_uploader(
     "Upload a mammography image (DICOM or standard image formats)",
-    type=["png", "jpg", "jpeg", "bmp", "tiff", "dcm"]
+    type=["png", "jpg", "jpeg", "tiff", "dcm"]
 )
 
 # Detect file change to reset session state
@@ -433,7 +427,7 @@ if uploaded_file:
         """Show 'N/A' in input box if value is empty or only whitespace."""
         return value.strip() if value.strip() else "N/A"
 
-    if file_type in ['png', 'jpg', 'jpeg', 'bmp', 'tiff']:
+    if file_type in ['png', 'jpg', 'jpeg', 'tiff']:
         # Non-DICOM image
         image = Image.open(uploaded_file).convert("RGB")
 
@@ -519,7 +513,12 @@ if uploaded_file:
         """,
         unsafe_allow_html=True
     )
-
+    # Transform
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
     # Convert image to tensor
     image_tensor = transform(image)
     show_gradcam = st.toggle("🔍 Why this report?")
@@ -530,8 +529,10 @@ if uploaded_file:
 
     if generate_clicked:
         with st.spinner("Generating report..."):
-           
-            report_text, avg_confidence, word_confidences = generate_report_with_confidence(image_tensor, decoder)
+            word_to_idx, idx_to_word, embedding_matrix = load_resources()
+            decoder = load_decoder()
+            resnet = load_resnet()
+            report_text, confidence = generate_report(image_tensor, decoder, resnet, word_to_idx, idx_to_word)
 
         # Show report text below
         st.markdown("### 🧾 Generated Report")
@@ -541,7 +542,7 @@ if uploaded_file:
                 st.markdown(f"- {line.strip('.')}.")
 
         st.markdown(f"### 🧠 Model Confidence Score: ")
-        st.write(f"{avg_confidence:.2f} (average softmax max values)")
+        st.write(f"{confidence:.2f} (average softmax max values)")
 
         if show_gradcam:
             # Grad-CAM setup
