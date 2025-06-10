@@ -1,38 +1,10 @@
 # ========================== #
-#!/usr/bin/env python3
-# run_app.py
 
-import os
-os.environ["STREAMLIT_WATCHER_TYPE"] = "none"
-os.environ["PYTORCH_JIT"] = "0"
-
-# 👇 import torch before using it
-import torch
-import types
-import subprocess
+# ----- Imports -----
 import sys
-
-# 👇 Patch torch.classes BEFORE importing streamlit
-if not hasattr(torch.classes, "__path__"):
-    torch.classes.__path__ = types.SimpleNamespace()
-    torch.classes.__path__._path = []
-
-
-# Now import Streamlit
-import streamlit as st
-
-
-# 🛠️ Ensure there's a running asyncio loop to prevent RuntimeError
-import asyncio
-try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-
-# ...your other imports
 import os
+import types
+import torch
 import base64
 import pickle
 import tempfile
