@@ -1,28 +1,31 @@
-# ========================== #
+# ========================== # 
+import os
+os.environ["STREAMLIT_WATCHER_TYPE"] = "none"
+
+import asyncio
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 
 # ----- Imports -----
-import sys
-import os
-import types
-import torch
-import base64
 import pickle
 import tempfile
 from datetime import datetime
-from io import BytesIO
-
-import numpy as np
-import cv2
-import matplotlib.pyplot as plt
-import pydicom
-from PIL import Image
-from fpdf import FPDF
-
-import streamlit as st
+import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision.models import resnet50, ResNet50_Weights
-
+from PIL import Image
+from fpdf import FPDF
+import numpy as np
+import pydicom
+import streamlit as st
+import cv2
+import matplotlib.pyplot as plt
+from io import BytesIO
+import base64
 
 
 # ----- Device Setup -----
@@ -397,7 +400,6 @@ def overlay_gradcam_on_image(image_pil, cam):
     return overlayed
 
 
-
 # ========================== #
 # Streamlit User Interface
 # ========================== #
@@ -575,4 +577,4 @@ if uploaded_file:
                 data=f,
                 file_name="mammography_report.pdf",
                 mime="application/pdf"
-            )
+            )                     
