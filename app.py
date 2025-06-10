@@ -8,6 +8,9 @@ os.environ["PYTORCH_JIT"] = "0"  # 🔒 Prevents JIT errors with torch.classes
 # 🚨 Must come BEFORE importing torch or streamlit
 import torch
 import types
+import asyncio
+import subprocess
+import sys
 
 # 👇 Patch torch.classes BEFORE importing streamlit
 if not hasattr(torch.classes, "__path__"):
