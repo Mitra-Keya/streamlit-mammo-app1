@@ -2,18 +2,21 @@
 #!/usr/bin/env python3
 # run_app.py
 import os
-os.environ["STREAMLIT_WATCHER_TYPE"] = "none"  # Disable watcher that fails on torch.classes
+os.environ["STREAMLIT_WATCHER_TYPE"] = "none"  # 🚫 Disable Streamlit's file watcher
+os.environ["PYTORCH_JIT"] = "0"  # 🔒 Prevents JIT errors with torch.classes
 
-import asyncio
-import types
+# 🚨 Must come BEFORE importing torch or streamlit
 import torch
-import subprocess
-import sys
+import types
 
-# 🛡️ Patch torch.classes for Streamlit compatibility
+# 👇 Patch torch.classes BEFORE importing streamlit
 if not hasattr(torch.classes, "__path__"):
     torch.classes.__path__ = types.SimpleNamespace()
     torch.classes.__path__._path = []
+
+# Now import Streamlit
+import streamlit as st
+
 
 # 🛠️ Ensure there's a running asyncio loop to prevent RuntimeError
 try:
