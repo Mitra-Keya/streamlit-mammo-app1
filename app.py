@@ -1,7 +1,7 @@
 # ========================== #
 #!/usr/bin/env python3
 # run_app.py
-import asyncio
+
 import os
 os.environ["STREAMLIT_WATCHER_TYPE"] = "none"
 os.environ["PYTORCH_JIT"] = "0"
@@ -9,7 +9,6 @@ os.environ["PYTORCH_JIT"] = "0"
 # 👇 import torch before using it
 import torch
 import types
-# import asyncio
 import subprocess
 import sys
 
@@ -24,6 +23,7 @@ import streamlit as st
 
 
 # 🛠️ Ensure there's a running asyncio loop to prevent RuntimeError
+import asyncio
 try:
     asyncio.get_running_loop()
 except RuntimeError:
