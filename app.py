@@ -29,7 +29,7 @@ import streamlit as st
 from fpdf import FPDF
 
 # ----- Device Setup -----
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 # ====== Cache Model & Resource Loaders ======
@@ -100,40 +100,6 @@ def generate_report(image_tensor, decoder, resnet, word_to_idx, idx_to_word, max
             input_seq = predicted_idx.unsqueeze(0)
 
         return tokens_to_text(decoded_indices, idx_to_word), np.mean(confidences)
-
-# def generate_report_with_confidence(image_tensor, decoder, max_len=50):
-#     with torch.no_grad():
-#         image_tensor = image_tensor.unsqueeze(0).to(device)
-#         features = resnet(image_tensor).squeeze(-1).squeeze(-1)
-
-#         input_seq = torch.tensor([[word_to_idx["<SOS>"]]], device=device)
-#         decoded_indices = []
-#         confidences = []
-
-#         h = torch.tanh(decoder.image_fc(features)).unsqueeze(0)
-#         c = torch.zeros_like(h)
-#         hidden = (h, c)
-
-#         for _ in range(max_len):
-#             embed = decoder.embedding(input_seq)
-#             lstm_out, hidden = decoder.lstm(embed, hidden)
-#             output = decoder.fc_out(decoder.dropout(lstm_out))
-#             output = output[:, -1, :]
-
-#             probs = torch.softmax(output, dim=-1)
-#             confidence, predicted_idx = probs.max(dim=-1)
-#             predicted_id = predicted_idx.item()
-
-#             if predicted_id == word_to_idx["<EOS>"]:
-#                 break
-
-#             decoded_indices.append(predicted_id)
-#             confidences.append(confidence.item())
-#             input_seq = predicted_idx.unsqueeze(0)
-
-#         report_text = tokens_to_text(decoded_indices, idx_to_word)
-#         avg_confidence = np.mean(confidences) if confidences else 0.0
-#         return report_text, avg_confidence, confidences
 
 
 def save_report_as_pdf(report_text, image_pil, dicom_metadata=None, image_name="Uploaded Image", gradcam_img=None):
