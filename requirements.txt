@@ -49,7 +49,7 @@ rpds-py
 setuptools
 six
 smmap
-streamlit==1.34.0
+streamlit
 sympy
 tenacity
 toml
