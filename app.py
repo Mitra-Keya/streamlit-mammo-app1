@@ -22,12 +22,12 @@ import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision.models import resnet50, ResNet50_Weights
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import pydicom
 import cv2
 import streamlit as st
 from fpdf import FPDF
-
+import tempfile
 # ----- Device Setup -----
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -102,7 +102,8 @@ def generate_report(image_tensor, decoder, resnet, word_to_idx, idx_to_word, max
         return tokens_to_text(decoded_indices, idx_to_word), np.mean(confidences)
 
 
-def save_report_as_pdf(report_text, image_pil, dicom_metadata=None, image_name="Uploaded Image", gradcam_img=None):
+
+def save_report_as_pdf(report_text, image_pil, dicom_metadata=None, image_name="Uploaded Image", gradcam_img=None, important_region_img=None):
     pdf = FPDF()
     pdf.add_page()
 
@@ -184,40 +185,48 @@ def save_report_as_pdf(report_text, image_pil, dicom_metadata=None, image_name="
     pdf.ln(8)
 
     # Insert Original + Grad-CAM side by side if gradcam_img is available
-    if gradcam_img is not None:
+    if gradcam_img is not None and important_region_img is not None:
         pdf.set_font("Arial", 'B', 14)
-        pdf.cell(0, 10, "Original and Grad-CAM Visualization", ln=True)
-
-        # Add horizontal line under heading
+        pdf.cell(0, 10, "Image Visualization (Original | Grad-CAM | Marked Important Region)", ln=True)
         pdf.set_draw_color(0, 0, 0)
         pdf.set_line_width(0.5)
         pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-
         pdf.ln(4)
 
-        # Resize both images to 224x224
-        gradcam_pil = Image.fromarray(gradcam_img).resize((224, 224))
-        resized_image_pil = image_pil.resize((224, 224))
+        # Resize all to 224x224
+        def to_pil(img):
+            return Image.fromarray(img) if isinstance(img, np.ndarray) else img
 
+        img1 = image_pil.resize((224, 224))
+        img2 = to_pil(gradcam_img).resize((224, 224))
+        img3 = to_pil(important_region_img).resize((224, 224))
 
+        # Combine horizontally
+        combined = Image.new("RGB", (224 * 3, 224), color=(255, 255, 255))
+        combined.paste(img1, (0, 0))
+        combined.paste(img2, (224, 0))
+        combined.paste(img3, (448, 0))
 
-        # Save both images temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_orig_file, \
-            tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_gradcam_file:
+        # Add titles below each image
+        title_img = Image.new("RGB", (672, 250), color=(255, 255, 255))
+        title_img.paste(combined, (0, 0))
 
-            resized_image_pil.save(tmp_orig_file.name)
-            gradcam_pil.save(tmp_gradcam_file.name)
+        draw = ImageDraw.Draw(title_img)
+        try:
+            font = ImageFont.truetype("arial.ttf", 14)
+        except:
+            font = ImageFont.load_default()
 
-            x_orig = pdf.get_x()
-            y_orig = pdf.get_y()
+        draw.text((60, 230), "Original", fill="black", font=font)
+        draw.text((275, 230), "Grad-CAM", fill="black", font=font)
+        draw.text((500, 230), "Important Region", fill="black", font=font)
 
-            # Show original image
-            pdf.image(tmp_orig_file.name, x=x_orig, y=y_orig, w=80)
+        # Save temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_combined_file:
+            title_img.save(tmp_combined_file.name)
+            pdf.image(tmp_combined_file.name, x=20, w=170)
+        pdf.ln(8)
 
-            # Show Grad-CAM image right next to it
-            pdf.image(tmp_gradcam_file.name, x=x_orig + 85, y=y_orig, w=80)
-
-        pdf.ln(85)  # Move down to avoid overlap
     else: 
         # Fallback: only show original image if Grad-CAM is not available
         pdf.set_font("Arial", 'B', 14)
@@ -345,6 +354,7 @@ class GradCAM:
         grad_cam = grad_cam.squeeze().cpu().numpy()
         grad_cam = (grad_cam - grad_cam.min()) / (grad_cam.max() - grad_cam.min() + 1e-8)
         return grad_cam
+    
 
 # Grad-CAM visualization function
 def overlay_gradcam_on_image(image_pil, cam):
@@ -358,6 +368,42 @@ def overlay_gradcam_on_image(image_pil, cam):
     overlayed = heatmap * 0.4 + image_np * 0.6
     overlayed = np.clip(overlayed, 0, 255).astype(np.uint8)
     return overlayed
+
+# ======================== Draw Marked Important Region ============================
+def find_best_threshold(cam, min_area=50, max_area=5000):
+    thresholds = np.linspace(0.2, 0.8, 30)
+    best_thresh = 0.5
+    best_contour = None
+    best_area = 0
+    for thresh in thresholds:
+        mask = (cam > thresh).astype(np.uint8) * 255
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        filtered = [cnt for cnt in contours if min_area < cv2.contourArea(cnt) < max_area]
+        if filtered:
+            largest = max(filtered, key=cv2.contourArea)
+            area = cv2.contourArea(largest)
+            if area > best_area:
+                best_area = area
+                best_thresh = thresh
+                best_contour = largest
+    return best_thresh, best_contour
+
+# Convert PIL image to grayscale NumPy array and draw contour
+def draw_important_region(image_pil, cam):
+    resized_img = image_pil.resize((224, 224)).convert('L')
+    gray_np = np.array(resized_img)
+    gray_bgr = cv2.cvtColor(gray_np, cv2.COLOR_GRAY2BGR)
+
+    cam_resized = cv2.resize(cam, (224, 224))
+    _, best_contour = find_best_threshold(cam_resized)
+
+    if best_contour is not None:
+        cv2.drawContours(gray_bgr, [best_contour], -1, (255, 0, 0), thickness=3)
+    return gray_bgr
+
 
 
 # ========================== #
@@ -522,18 +568,54 @@ if uploaded_file:
             # Generate Grad-CAM
             cam_output = gradcam(image_tensor)
             gradcam_overlay = overlay_gradcam_on_image(image, cam_output)
+            marked_region_image = draw_important_region(image, cam_output)
 
-            pdf_path = save_report_as_pdf(report_text, image, dicom_metadata, image_name=uploaded_file.name, gradcam_img=gradcam_overlay)
+            pdf_path = save_report_as_pdf(report_text, image, dicom_metadata, image_name=uploaded_file.name, gradcam_img=gradcam_overlay, important_region_img=marked_region_image)
 
             # Display
-            st.markdown("### 🔥 Grad-CAM Visualization")
-            st.image(gradcam_overlay, caption="Regions influencing the report",use_container_width=False, width=300)
+            st.markdown("### 🔥 Grad-CAM Visualizations (Side-by-Side)")
 
-            # Grad-CAM image
-            cam_img = Image.fromarray(gradcam_overlay)
-            buf = BytesIO()
-            cam_img.save(buf, format="PNG")
-            st.download_button("📥 Download Grad-CAM", buf.getvalue(), file_name="gradcam.png", mime="image/png")
+            col1, col2 = st.columns(2)
+
+            # --- Column 1: Grad-CAM Overlay Image and Download ---
+            with col1:
+                st.image(gradcam_overlay, caption="Regions Influencing the Report", use_container_width=True)
+
+            # --- Column 2: Marked Important Region and Download ---
+            with col2:
+                st.image(marked_region_image, caption="Marked Important Region", use_container_width=True)
+
+            # Convert NumPy arrays to PIL Images if needed
+            gradcam_img = Image.fromarray(gradcam_overlay)
+            marked_img = Image.fromarray(marked_region_image)
+
+            # Ensure same height (resize if needed)
+            if gradcam_img.height != marked_img.height:
+                marked_img = marked_img.resize((marked_img.width, gradcam_img.height))
+
+            # Create new image wide enough to hold both
+            total_width = gradcam_img.width + marked_img.width
+            max_height = max(gradcam_img.height, marked_img.height)
+
+            combined_image = Image.new("RGB", (total_width, max_height))
+
+            # Paste both images side-by-side
+            combined_image.paste(gradcam_img, (0, 0))
+            combined_image.paste(marked_img, (gradcam_img.width, 0))
+
+            # Save to buffer
+            combined_buf = BytesIO()
+            combined_image.save(combined_buf, format="PNG")
+            combined_buf.seek(0)
+
+            # Streamlit download button
+            st.download_button(
+                label="📥 Download Combined Image",
+                data=combined_buf,
+                file_name="combined_result.png",
+                mime="image/png"
+            )
+
         else:
             pdf_path = save_report_as_pdf(report_text, image, dicom_metadata, image_name=uploaded_file.name)
         
